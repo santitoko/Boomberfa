@@ -22,9 +22,9 @@
       box-shadow: 0 0 30px rgba(255, 0, 127, 0.45);
       width: 90%; max-width: 520px;
     }
-    h1 { color: #00f5d4; font-size: 16px; margin: 0 0 15px 0; text-shadow: 3px 3px #ff007f; letter-spacing: 1px; }
+    h1 { color: #00f5d4; font-size: 16px; margin: 0 0 15px 0; text-shadow: 3px 3px #ff007f; }
     .field-row { margin-bottom: 12px; text-align: left; }
-    label { font-size: 8px; display: block; margin-bottom: 5px; color: #fcee0a; letter-spacing: 0.5px; }
+    label { font-size: 8px; display: block; margin-bottom: 5px; color: #fcee0a; }
     input[type="text"] {
       width: 100%; padding: 10px; background: #07040d; border: 2px solid #7928ca;
       color: #00f5d4; font-family: inherit; font-size: 10px; outline: none; text-transform: uppercase;
@@ -49,7 +49,8 @@
     button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 #000; }
     .btn-host { background: #00f5d4; color: #000; }
     .btn-join { background: #ff007f; color: #fff; }
-    .btn-start { background: #fcee0a; color: #000; width: 100%; margin-top: 10px; }
+    .btn-solo { background: #fcee0a; color: #000; width: 100%; margin-top: 10px; }
+    .btn-start { background: #00f5d4; color: #000; width: 100%; margin-top: 10px; }
     #statusLog { font-size: 8px; color: #9d8ec2; margin-top: 12px; min-height: 14px; line-height: 1.4; }
 
     #gameArea { display: none; flex-direction: column; align-items: center; }
@@ -87,7 +88,7 @@
 
     <div class="field-row">
       <label>TU APODO / TAG:</label>
-      <input type="text" id="tagInput" value="BANDIDO_1" maxlength="10" />
+      <input type="text" id="tagInput" value="CABEZON57" maxlength="10" />
     </div>
 
     <label>PERSONALIZAR SKIN:</label>
@@ -120,7 +121,8 @@
       <button class="btn-join" id="btnJoin">UNIRSE A SALA</button>
     </div>
 
-    <button class="btn-start" id="btnStartGame" style="display: none;">¡ARRANCAR PARTIDA!</button>
+    <button class="btn-start" id="btnStartGame" style="display: none;">¡ARRANCAR PARTIDA (HOST)!</button>
+    <button class="btn-solo" id="btnSolo">JUGAR SOLITARIO / TEST</button>
     <div id="statusLog">Elegí tu skin y creá o sumate a una sala.</div>
   </div>
 
@@ -142,24 +144,6 @@
   </div>
 
   <script>
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    let actx = null;
-    function playBeep(freq, type, dur) {
-      if (!actx) actx = new AudioCtx();
-      try {
-        const osc = actx.createOscillator();
-        const gain = actx.createGain();
-        osc.type = type;
-        osc.frequency.setValueAtTime(freq, actx.currentTime);
-        gain.gain.setValueAtTime(0.15, actx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, actx.currentTime + dur);
-        osc.connect(gain);
-        gain.connect(actx.destination);
-        osc.start();
-        osc.stop(actx.currentTime + dur);
-      } catch (e) {}
-    }
-
     const TILE = 48;
     const COLS = 15;
     const ROWS = 13;
@@ -173,7 +157,7 @@
 
     let peer = null;
     let isHost = false;
-    let myPeerId = null;
+    let myPeerId = 'PLAYER_LOCAL';
     let connections = {};
     let hostConn = null;
 
@@ -186,6 +170,7 @@
     const gameArea = document.getElementById('gameArea');
     const statusLog = document.getElementById('statusLog');
     const btnStartGame = document.getElementById('btnStartGame');
+    const btnSolo = document.getElementById('btnSolo');
     const previewCanvas = document.getElementById('previewCanvas');
     const pctx = previewCanvas.getContext('2d');
     const canvas = document.getElementById('gameCanvas');
@@ -248,4 +233,405 @@
       for (let r = 0; r < ROWS; r++) {
         const row = [];
         for (let c = 0; c < COLS; c++) {
-          if (r === 0 || r === ROWS - 1 ||
+          if (r === 0 || r === ROWS - 1 || c === 0 || c === COLS - 1) {
+            row.push(1);
+          } else if (r % 2 === 0 && c % 2 === 0) {
+            row.push(1);
+          } else {
+            const isSpawn =
+              (r <= 2 && c <= 2) ||
+              (r <= 2 && c >= COLS - 3) ||
+              (r >= ROWS - 3 && c <= 2) ||
+              (r >= ROWS - 3 && c >= COLS - 3);
+
+            if (!isSpawn && Math.random() < 0.65) {
+              row.push(2);
+            } else {
+              row.push(0);
+            }
+          }
+        }
+        grid.push(row);
+      }
+      return grid;
+    }
+
+    function getMySkin() {
+      return {
+        jacket: colJacket.value,
+        cap: colCap.value,
+        pants: colPants.value,
+        tag: tagInput.value.trim().toUpperCase() || 'BANDIDO'
+      };
+    }
+
+    // MODO SOLITARIO (Para probar directo sin red)
+    btnSolo.addEventListener('click', () => {
+      myPeerId = 'SOLO';
+      isHost = true;
+      map = generateMap();
+      players[myPeerId] = {
+        slot: 0,
+        skin: getMySkin(),
+        x: SPAWNS[0].x * TILE + 24,
+        y: SPAWNS[0].y * TILE + 24,
+        dir: 'down',
+        alive: true,
+        speed: 3,
+        range: 2
+      };
+      document.getElementById('roomTagDisplay').innerText = 'SALA: TEST LOCAL';
+      document.getElementById('playersCountDisplay').innerText = 'CREW: 1/1';
+      startGameSession();
+    });
+
+    // CREAR SALA (HOST)
+    document.getElementById('btnHost').addEventListener('click', () => {
+      if (location.protocol === 'file:') {
+        statusLog.innerText = 'AVISO: Para jugar online debés abrirlo desde GitHub Pages (https://) o un servidor local.';
+        return;
+      }
+      const roomCode = 'CALLE' + Math.floor(10 + Math.random() * 90);
+      statusLog.innerText = `Conectando servidor WebRTC...`;
+
+      try {
+        peer = new Peer(roomCode);
+      } catch (err) {
+        statusLog.innerText = 'No se pudo cargar PeerJS. Usá "JUGAR SOLITARIO".';
+        return;
+      }
+
+      peer.on('open', (id) => {
+        isHost = true;
+        myPeerId = id;
+        map = generateMap();
+
+        players[myPeerId] = {
+          slot: 0,
+          skin: getMySkin(),
+          x: SPAWNS[0].x * TILE + 24,
+          y: SPAWNS[0].y * TILE + 24,
+          dir: 'down',
+          alive: true,
+          speed: 3,
+          range: 2
+        };
+
+        statusLog.innerText = `¡SALA CREADA! Código: ${id}`;
+        document.getElementById('roomTagDisplay').innerText = `SALA: ${id}`;
+        btnStartGame.style.display = 'block';
+        updateCrewCounter();
+      });
+
+      peer.on('connection', (conn) => {
+        const currentCount = Object.keys(players).length;
+        if (currentCount >= 4) {
+          conn.send({ type: 'FULL' });
+          setTimeout(() => conn.close(), 500);
+          return;
+        }
+
+        conn.on('data', (data) => handleHostIncomingData(conn, data));
+        conn.on('close', () => {
+          delete players[conn.peer];
+          delete connections[conn.peer];
+          broadcast({ type: 'PLAYER_LEFT', peerId: conn.peer });
+          updateCrewCounter();
+        });
+      });
+
+      peer.on('error', (err) => {
+        statusLog.innerText = `Error WebRTC: ${err.type}`;
+      });
+    });
+
+    // UNIRSE
+    document.getElementById('btnJoin').addEventListener('click', () => {
+      if (location.protocol === 'file:') {
+        statusLog.innerText = 'AVISO: Abrilo desde GitHub Pages (https://) para conectar por red.';
+        return;
+      }
+      const targetRoom = roomCodeInput.value.trim().toUpperCase();
+      if (!targetRoom) {
+        statusLog.innerText = 'Ingresá un código de sala válido.';
+        return;
+      }
+
+      statusLog.innerText = `Buscando sala ${targetRoom}...`;
+      peer = new Peer();
+
+      peer.on('open', (id) => {
+        myPeerId = id;
+        hostConn = peer.connect(targetRoom);
+
+        hostConn.on('open', () => {
+          statusLog.innerText = '¡Conectado! Esperando que el Host inicie...';
+          document.getElementById('roomTagDisplay').innerText = `SALA: ${targetRoom}`;
+          hostConn.send({ type: 'JOIN', skin: getMySkin() });
+        });
+
+        hostConn.on('data', (data) => handleClientIncomingData(data));
+        hostConn.on('close', () => {
+          alert('Conexión finalizada.');
+          location.reload();
+        });
+      });
+
+      peer.on('error', () => {
+        statusLog.innerText = `No se encontró la sala ${targetRoom}.`;
+      });
+    });
+
+    btnStartGame.addEventListener('click', () => {
+      broadcast({ type: 'START_GAME', map, players });
+      startGameSession();
+    });
+
+    function broadcast(msg) {
+      Object.values(connections).forEach(c => c.send(msg));
+    }
+
+    function updateCrewCounter() {
+      const count = Object.keys(players).length;
+      document.getElementById('playersCountDisplay').innerText = `CREW: ${count}/4`;
+    }
+
+    function handleHostIncomingData(conn, data) {
+      if (data.type === 'JOIN') {
+        const slot = Object.keys(players).length;
+        connections[conn.peer] = conn;
+
+        players[conn.peer] = {
+          slot: slot,
+          skin: data.skin,
+          x: SPAWNS[slot].x * TILE + 24,
+          y: SPAWNS[slot].y * TILE + 24,
+          dir: 'down',
+          alive: true,
+          speed: 3,
+          range: 2
+        };
+
+        updateCrewCounter();
+        statusLog.innerText = `${data.skin.tag} se sumó a la crew.`;
+      } else if (data.type === 'MOVE') {
+        if (players[data.peerId]) {
+          players[data.peerId].x = data.x;
+          players[data.peerId].y = data.y;
+          players[data.peerId].dir = data.dir;
+          broadcast(data);
+        }
+      } else if (data.type === 'PLACE_BOMB') {
+        triggerBomb(data.gx, data.gy, data.range);
+      }
+    }
+
+    function handleClientIncomingData(data) {
+      if (data.type === 'START_GAME') {
+        map = data.map;
+        players = data.players;
+        startGameSession();
+      } else if (data.type === 'MOVE') {
+        if (players[data.peerId]) {
+          players[data.peerId].x = data.x;
+          players[data.peerId].y = data.y;
+          players[data.peerId].dir = data.dir;
+        }
+      } else if (data.type === 'BOMB_PLACED') {
+        bombs.push(data.bomb);
+      } else if (data.type === 'BOMB_EXPLODED') {
+        bombs = bombs.filter(b => b.id !== data.bombId);
+        map = data.map;
+        data.tiles.forEach(t => {
+          smokePuffs.push({ x: t.x * TILE, y: t.y * TILE, life: 35 });
+        });
+      } else if (data.type === 'PLAYER_LEFT') {
+        delete players[data.peerId];
+        updateCrewCounter();
+      }
+    }
+
+    function startGameSession() {
+      lobby.style.display = 'none';
+      gameArea.style.display = 'flex';
+      if ('ontouchstart' in window) {
+        document.getElementById('touchControls').style.display = 'flex';
+      }
+    }
+
+    function triggerBomb(gx, gy, range) {
+      const bomb = { id: `B_${Date.now()}_${Math.random()}`, gx, gy, range };
+      bombs.push(bomb);
+      if (isHost && Object.keys(connections).length > 0) broadcast({ type: 'BOMB_PLACED', bomb });
+
+      setTimeout(() => explodeBomb(bomb), 2600);
+    }
+
+    function explodeBomb(bomb) {
+      bombs = bombs.filter(b => b.id !== bomb.id);
+      const tiles = [{ x: bomb.gx, y: bomb.gy }];
+      const dirs = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
+
+      dirs.forEach(d => {
+        for (let i = 1; i <= bomb.range; i++) {
+          const tx = bomb.gx + d.x * i;
+          const ty = bomb.gy + d.y * i;
+          if (tx < 0 || tx >= COLS || ty < 0 || ty >= ROWS) break;
+          if (map[ty][tx] === 1) break;
+          tiles.push({ x: tx, y: ty });
+          if (map[ty][tx] === 2) {
+            map[ty][tx] = 0;
+            break;
+          }
+        }
+      });
+
+      tiles.forEach(t => {
+        smokePuffs.push({ x: t.x * TILE, y: t.y * TILE, life: 35 });
+      });
+
+      if (isHost && Object.keys(connections).length > 0) {
+        broadcast({ type: 'BOMB_EXPLODED', bombId: bomb.id, tiles, map });
+      }
+    }
+
+    const keys = {};
+    window.addEventListener('keydown', e => {
+      keys[e.code] = true;
+      if (e.code === 'Space') dropLocalBomb();
+    });
+    window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+    function dropLocalBomb() {
+      const me = players[myPeerId];
+      if (!me || !me.alive) return;
+      const gx = Math.floor(me.x / TILE);
+      const gy = Math.floor(me.y / TILE);
+
+      if (isHost) {
+        triggerBomb(gx, gy, me.range);
+      } else if (hostConn) {
+        hostConn.send({ type: 'PLACE_BOMB', gx, gy, range: me.range });
+      }
+    }
+
+    function updateLocalPlayer() {
+      const me = players[myPeerId];
+      if (!me || !me.alive) return;
+
+      let dx = 0, dy = 0;
+      let dir = me.dir;
+
+      if (keys['KeyW'] || keys['ArrowUp']) { dy -= me.speed; dir = 'up'; }
+      if (keys['KeyS'] || keys['ArrowDown']) { dy += me.speed; dir = 'down'; }
+      if (keys['KeyA'] || keys['ArrowLeft']) { dx -= me.speed; dir = 'left'; }
+      if (keys['KeyD'] || keys['ArrowRight']) { dx += me.speed; dir = 'right'; }
+
+      if (dx !== 0 || dy !== 0) {
+        const nx = me.x + dx;
+        const ny = me.y + dy;
+        const r = 12;
+
+        const left = Math.floor((nx - r) / TILE);
+        const right = Math.floor((nx + r) / TILE);
+        const top = Math.floor((ny - r) / TILE);
+        const bottom = Math.floor((ny + r) / TILE);
+
+        const canMove = (
+          isWalkable(left, top) &&
+          isWalkable(right, top) &&
+          isWalkable(left, bottom) &&
+          isWalkable(right, bottom)
+        );
+
+        if (canMove) {
+          me.x = nx;
+          me.y = ny;
+          me.dir = dir;
+
+          if (isHost && Object.keys(connections).length > 0) {
+            broadcast({ type: 'MOVE', peerId: myPeerId, x: me.x, y: me.y, dir: me.dir });
+          } else if (hostConn) {
+            hostConn.send({ type: 'MOVE', peerId: myPeerId, x: me.x, y: me.y, dir: me.dir });
+          }
+        }
+      }
+    }
+
+    function isWalkable(tx, ty) {
+      if (!map[ty] || tx < 0 || tx >= COLS || ty < 0 || ty >= ROWS) return false;
+      return map[ty][tx] === 0;
+    }
+
+    function loop() {
+      updateLocalPlayer();
+
+      ctx.fillStyle = '#11091e';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (map.length) {
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const tile = map[r][c];
+            const px = c * TILE;
+            const py = r * TILE;
+
+            if (tile === 1) {
+              ctx.fillStyle = '#221533';
+              ctx.fillRect(px, py, TILE, TILE);
+              ctx.strokeStyle = '#382255';
+              ctx.strokeRect(px + 2, py + 2, TILE - 4, TILE - 4);
+              ctx.fillStyle = (r + c) % 2 === 0 ? '#ff007f' : '#00f5d4';
+              ctx.fillRect(px + 10, py + 20, 28, 6);
+            } else if (tile === 2) {
+              ctx.fillStyle = '#2c2236';
+              ctx.fillRect(px + 3, py + 3, TILE - 6, TILE - 6);
+              ctx.fillStyle = '#ff007f';
+              ctx.beginPath();
+              ctx.arc(px + 24, py + 24, 12, 0, Math.PI * 2);
+              ctx.fill();
+            } else {
+              ctx.fillStyle = (r + c) % 2 === 0 ? '#160d24' : '#130a20';
+              ctx.fillRect(px, py, TILE, TILE);
+            }
+          }
+        }
+      }
+
+      bombs.forEach(b => {
+        const bx = b.gx * TILE + 24;
+        const by = b.gy * TILE + 24;
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(bx - 12, by - 4, 24, 8);
+        ctx.fillStyle = '#e69138';
+        ctx.fillRect(bx - 12, by - 4, 6, 8);
+        ctx.fillStyle = '#ff3300';
+        ctx.fillRect(bx + 9, by - 4, 3, 8);
+      });
+
+      smokePuffs = smokePuffs.filter(s => {
+        ctx.fillStyle = `rgba(0, 245, 212, ${s.life / 35})`;
+        ctx.beginPath();
+        ctx.arc(s.x + 24, s.y + 24, (35 - s.life) * 1.1 + 8, 0, Math.PI * 2);
+        ctx.fill();
+        s.life--;
+        return s.life > 0;
+      });
+
+      Object.entries(players).forEach(([id, p]) => {
+        if (p.alive) {
+          drawBandit(ctx, p.x, p.y, p.skin, p.dir);
+          ctx.fillStyle = id === myPeerId ? '#fcee0a' : '#ffffff';
+          ctx.font = '8px "Press Start 2P"';
+          ctx.textAlign = 'center';
+          ctx.fillText(p.skin.tag, p.x, p.y - 30);
+        }
+      });
+
+      requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
